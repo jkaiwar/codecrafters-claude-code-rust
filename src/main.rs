@@ -1,6 +1,6 @@
 use async_openai::{Client, config::OpenAIConfig, types::chat::{ChatCompletionMessageToolCalls::Function, CreateChatCompletionResponse}};
 use clap::Parser;
-use serde_json::{Value, from_value, json};
+use serde_json::{Value, from_str, from_value, json};
 use std::{env, fs::File, io, process};
 
 #[derive(Parser)]
@@ -58,29 +58,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }))
         .await?;
 
-    let chat_response : CreateChatCompletionResponse = from_value(response).unwrap();
-    let Function(call) = chat_response
-        .choices[0]
-        .message
-        .tool_calls
-        .as_ref()
-        .unwrap()
-        .first()
-        .unwrap() else {
-            panic!();
-        };
+    let message = &from_value::<CreateChatCompletionResponse>(response)?.choices[0].message;
 
-    assert_eq!(call.function.name, "Read");
-    let arguments: Value = serde_json::from_str(&call.function.arguments)? ;
-    let file_name = arguments
-        .get("file_path")
-        .and_then(Value::as_str)
-        .unwrap();
+    if let Some(content) = &message.content {
+        println!("{}", content);
+    }
 
-    let mut file = File::open(file_name)?;
-    let mut out = io::stdout();
-
-    io::copy(&mut file, &mut out)?;
-
+    if let Some(tool_calls) = &message
+        .tool_calls {
+            let Function(call) = &tool_calls[0] else {
+                panic!();
+            };
+            assert_eq!(call.function.name, "Read");
+            let file_path = from_str::<Value>(&call.function.arguments)?
+                .get("file_path")
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_owned();
+            
+            let mut file = File::open(file_path)?;
+            let mut out = io::stdout();
+            io::copy(&mut file, &mut out)?;
+        }
+    
     Ok(())
 }
