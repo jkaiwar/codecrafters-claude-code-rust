@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(call.function.name, "Read");
     let arguments: Value = serde_json::from_str(&call.function.arguments)? ;
     let file_name = arguments
-        .get("file_name")
+        .get("file_path")
         .and_then(Value::as_str)
         .unwrap();
 
