@@ -1,7 +1,7 @@
 use async_openai::{Client, config::OpenAIConfig, types::chat::{ChatCompletionMessageToolCalls::Function, ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage, ChatCompletionRequestToolMessageArgs, ChatCompletionRequestUserMessageArgs, ChatCompletionTool, ChatCompletionTools, CreateChatCompletionRequestArgs, FunctionObjectArgs}};
 use clap::Parser;
 use serde_json::{Value, from_str, json};
-use std::{env, fs::{read_to_string}, process};
+use std::{env, fs::{self, read_to_string}, path::Path, process};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -28,21 +28,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::with_config(config);
 
-    let tools = vec![ChatCompletionTools::Function(ChatCompletionTool {
-        function: FunctionObjectArgs::default()
-        .name("Read")
-        .description("Read and return the contents of a file")
-        .parameters(json!({
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "the path to the file to read",
+    let tools = vec![
+        ChatCompletionTools::Function(ChatCompletionTool {
+            function: FunctionObjectArgs::default()
+            .name("Read")
+            .description("Read and return the contents of a file")
+            .parameters(json!({
+                "type": "object",
+                "required": ["file_path"],
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "the path to the file to read",
+                    },
                 },
-            },
-        }))
-        .build()?
-    })];
+            }))
+            .build()?}),
+        ChatCompletionTools::Function(ChatCompletionTool {
+            function: FunctionObjectArgs::default()
+            .name("Write")
+            .description("Write content to a file")
+            .parameters(json!({
+                "type": "object",
+                "required": ["file_path", "content"],
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "the path of the file to write to",
+                    },
+                    "content" : {
+                        "type": "string",
+                        "description": "The content to write to the file",
+                    },
+                },
+            }))
+            .build()?}),
+    ];
     
     let mut messages = vec![
         ChatCompletionRequestMessage::User(
@@ -92,6 +113,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 messages.push(ChatCompletionRequestMessage::Tool(
                     ChatCompletionRequestToolMessageArgs::default()
                         .content(read_to_string(file_path)?)
+                        .tool_call_id(&call.id)
+                        .build()?
+                ))
+            } else if call.function.name == "Write" {
+                let arguments: Value = from_str(&call.function.arguments)?;
+
+                let file_path = arguments.get("file_path")
+                    .and_then(Value::as_str)
+                    .unwrap()
+                    .to_owned();
+                
+                let content = arguments.get("content")
+                    .and_then(Value::as_str)
+                    .unwrap()
+                    .to_owned();
+
+                let path = Path::new(&file_path);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?
+                }
+                fs::write(&file_path, content)?;
+                messages.push(ChatCompletionRequestMessage::Tool(
+                    ChatCompletionRequestToolMessageArgs::default()
+                        .content(format!("Successfully wrote content to {}", &file_path))
                         .tool_call_id(&call.id)
                         .build()?
                 ))
